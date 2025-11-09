@@ -3,13 +3,16 @@ import os
 import requests
 import json
 import asyncio
+import http.server
+import socketserver
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from urllib.parse import urlparse, parse_qs
 
 # --- Configuration and Constants ---
 # Use environment variables for sensitive data
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "") # Keep it as empty string if not provided
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "") 
 
 # Gemini API URLs
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
@@ -22,18 +25,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- AI API Functions ---
+# --- Application Instance (Global) ---
+# Declare application globally to be accessible by the webhook handler
+application: Application = None 
+
+# --- AI API Functions (Contents remain the same) ---
 
 async def generate_gemini_response(prompt: str) -> str:
     """Sends a text prompt to the Gemini API with Google Search grounding."""
     url = f"{GEMINI_API_BASE}/{GEMINI_TEXT_MODEL}:generateContent?key={GEMINI_API_KEY}"
     
-    # System instruction guides the assistant's behavior
     system_prompt = "You are Zathura Companion, a helpful AI assistant in a Telegram chat. Answer questions concisely, drawing from your knowledge and the provided search results. If asked for image generation, instruct the user to use the /generate command."
 
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
-        "tools": [{"google_search": {}}],  # Enable Google Search grounding
+        "tools": [{"google_search": {}}],
         "systemInstruction": {"parts": [{"text": system_prompt}]},
     }
 
@@ -49,15 +55,12 @@ async def generate_gemini_response(prompt: str) -> str:
         
         data = response.json()
         
-        # Extract text
         text = data.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', "Sorry, I couldn't process that request.")
-        
-        # Extract sources if available
         sources = data.get('candidates', [{}])[0].get('groundingMetadata', {}).get('groundingAttributions', [])
         
         if sources:
             source_list = "\n\nSources:\n"
-            for i, source in enumerate(sources[:3]): # Limit to 3 sources
+            for i, source in enumerate(sources[:3]):
                 title = source.get('web', {}).get('title', 'Link')
                 uri = source.get('web', {}).get('uri', '#')
                 source_list += f"{i+1}. [{title}]({uri})\n"
@@ -73,8 +76,6 @@ async def generate_imagen_image(prompt: str) -> str:
     """Sends a prompt to the Imagen API and returns a base64 image URL."""
     url = f"{GEMINI_API_BASE}/{GEMINI_IMAGE_MODEL}?key={GEMINI_API_KEY}"
     
-    # System instruction for image generation model
-    # Note: Using the :predict endpoint as described in instructions
     payload = {
         "instances": {
             "prompt": f"Professional digital art, highly detailed, sci-fi: {prompt}"
@@ -106,7 +107,7 @@ async def generate_imagen_image(prompt: str) -> str:
         logger.error(f"Imagen API Request failed: {e}")
         return None
 
-# --- Telegram Handlers ---
+# --- Telegram Handlers (Contents remain the same) ---
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends a welcome message when the command /start is issued."""
@@ -122,7 +123,6 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Handles text messages and responds using the Gemini API."""
     user_prompt = update.message.text
     
-    # Show typing status immediately
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
     logger.info(f"Received text prompt from {update.effective_user.username}: {user_prompt}")
@@ -139,68 +139,87 @@ async def generate_image_command(update: Update, context: ContextTypes.DEFAULT_T
 
     image_prompt = " ".join(context.args)
     
-    # Show upload photo status immediately
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_photo")
     
     logger.info(f"Received image generation prompt: {image_prompt}")
 
-    # Generate image data (base64 URL)
     image_url = await generate_imagen_image(image_prompt)
 
     if image_url:
-        # For the Canvas environment, since direct file sending is tricky without a buffer,
-        # we will use the generated URL in a markdown link so the user can verify the output.
-        
         await update.message.reply_text(
             f"Image generation successful for: *{image_prompt}*\n\n"
             f"[View Generated Image (External Link)]({image_url})",
             parse_mode='Markdown'
         )
-
     else:
         await update.message.reply_text("Image generation failed. Please try a different prompt.")
+
+# --- Custom Webhook Handler ---
+
+class CustomWebhookHandler(http.server.BaseHTTPRequestHandler):
+    """Handles incoming HTTP requests for Telegram webhooks."""
+    
+    def do_POST(self):
+        content_length = int(self.headers['Content-Length'])
+        update_json = self.rfile.read(content_length).decode('utf-8')
+        
+        try:
+            update_data = json.loads(update_json)
+            update = Update.de_json(update_data, application.bot)
+            
+            # Process the update using the application's update queue
+            asyncio.run(application.process_update(update))
+
+            self.send_response(200)
+            self.end_headers()
+        except Exception as e:
+            logger.error(f"Error processing update: {e}")
+            self.send_response(500)
+            self.end_headers()
+
+    def do_GET(self):
+        # Respond to GET requests (used for health checks)
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(b"Zathura Companion Bot is running.")
 
 
 def main() -> None:
     """Starts the bot."""
+    global application # Use the global application instance
+
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN environment variable not set. Exiting.")
         return
 
-    # Create the Application and pass it your bot's token.
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # on different commands - answer in Telegram
+    # Handlers setup
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("generate", generate_image_command))
-
-    # on non-command messages - handle the text input
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
 
-    # Start the bot.
-    
-    # Check if we are in a deployment environment (like Render, which sets PORT)
+    # --- Webhook Startup ---
     PORT = int(os.environ.get('PORT', 8080))
     WEBHOOK_URL = os.environ.get('WEBHOOK_URL')
 
     if WEBHOOK_URL:
-        # Running via explicit webhook setup to bypass ptb v20.x run_webhook conflicts.
+        # Running via custom Webhook Server
         
         # 1. Set the webhook URL on Telegram's side
-        application.bot.set_webhook(f"{WEBHOOK_URL}") # Use simple base URL for simple path fix
+        # NOTE: Using the BOT_TOKEN as the secret path for security
+        webhook_path = f"/{BOT_TOKEN}"
+        full_webhook_url = f"{WEBHOOK_URL}{webhook_path}"
 
-        # 2. Start the built-in HTTP server to listen for webhooks
-        # FINAL FIX: Set url_path to an empty string to prevent the library from generating complex paths 
-        # and referencing deprecated internal logic.
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path="", 
-            webhook_url=WEBHOOK_URL,
-            # We explicitly set the secret token here for security best practices.
-            secret_token=BOT_TOKEN
-        )
-        logger.info(f"Bot started successfully via webhook on port {PORT}. URL: {WEBHOOK_URL}")
+        logger.info(f"Setting webhook to: {full_webhook_url}")
+        application.bot.set_webhook(full_webhook_url)
+
+        # 2. Start the custom HTTP server
+        with socketserver.TCPServer(("0.0.0.0", PORT), CustomWebhookHandler) as httpd:
+            logger.info(f"Serving webhook handler on port {PORT}...")
+            httpd.serve_forever()
+
     else:
         # Running via polling for local development
         application.run_polling(allowed_updates=Update.ALL_TYPES)
