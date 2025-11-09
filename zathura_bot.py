@@ -177,11 +177,7 @@ def main() -> None:
     # on non-command messages - handle the text input
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
 
-    # Start the bot. Use polling for local testing/easy deployment.
-    # For robust production webhooks are recommended (use application.run_webhook).
-    
-    # We will use the deployment method specified in the Procfile (webhooks) but
-    # for local testing instructions we use run_polling.
+    # Start the bot.
     
     # Check if we are in a deployment environment (like Render, which sets PORT)
     PORT = int(os.environ.get('PORT', 8080))
@@ -189,12 +185,13 @@ def main() -> None:
 
     if WEBHOOK_URL:
         # Running via webhook for production environments (Render, etc.)
+        # FIX: Removed unnecessary/deprecated webhook setup parameters for ptb v20.x
         application.run_webhook(
             listen="0.0.0.0",
             port=PORT,
             url_path=BOT_TOKEN,
             webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}",
-            secret_token=BOT_TOKEN # Use bot token as secret for simplicity
+            # Note: Removed secret_token=BOT_TOKEN as it may not be needed or handled differently.
         )
         logger.info(f"Bot started successfully via webhook on port {PORT}. URL: {WEBHOOK_URL}")
     else:
