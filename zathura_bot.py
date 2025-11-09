@@ -224,13 +224,3 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-```
-### 2. `requirements.txt` (Python Dependencies)
-
-```
-python-telegram-bot==13.15
-requests
-Pillow
-```
-
-### 3. `Procfile` (Render Configuration)
