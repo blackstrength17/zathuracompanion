@@ -1,1 +1,1 @@
-web: python zathura_bot.py
+web: gunicorn zathura_bot:app
