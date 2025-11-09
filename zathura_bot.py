@@ -185,13 +185,11 @@ def main() -> None:
 
     if WEBHOOK_URL:
         # Running via webhook for production environments (Render, etc.)
-        # FIX: Removed unnecessary/deprecated webhook setup parameters for ptb v20.x
+        # FINAL FIX: Removed the redundant url_path parameter to prevent ptb v20.x from referencing the old Updater class.
         application.run_webhook(
             listen="0.0.0.0",
             port=PORT,
-            url_path=BOT_TOKEN,
             webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}",
-            # Note: Removed secret_token=BOT_TOKEN as it may not be needed or handled differently.
         )
         logger.info(f"Bot started successfully via webhook on port {PORT}. URL: {WEBHOOK_URL}")
     else:
