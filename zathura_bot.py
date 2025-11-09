@@ -5,7 +5,6 @@ import json
 import logging
 from flask import Flask, request, jsonify
 import sys
-import threading
 
 # --- Configuration and Constants ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -79,17 +78,30 @@ def send_telegram_message(chat_id, text, parse_mode="MarkdownV2"):
     }
     requests.post(send_url, json=payload)
 
-# --- Asynchronous Logic Processor ---
+# --- Flask Webhook Route ---
 
-def process_telegram_update(update):
-    """Processes the message payload in a separate thread."""
+@app.route('/')
+def hello():
+    # Simple check to confirm service is awake
+    return "Zathura Companion Bot is running."
+
+@app.route('/webhook', methods=['POST'])
+def webhook_handler():
+    if not BOT_TOKEN:
+        return jsonify({'status': 'BOT_TOKEN not configured'}), 503
+
     try:
+        update = request.get_json()
+        
+        if not update or 'message' not in update:
+            return jsonify({'status': 'No message in update'}), 200
+
         message = update['message']
         chat_id = message['chat']['id']
         text = message.get('text', '')
 
         if not text:
-            return
+            return jsonify({'status': 'No text in message'}), 200
 
         # Command Handling
         if text.startswith('/start'):
@@ -104,64 +116,25 @@ def process_telegram_update(update):
         
         # Text Handling
         else:
-            # 1. Send "Thinking..." acknowledgment
+            # Send thinking message instantly before processing
             send_telegram_message(chat_id, "Thinking...")
             
-            # 2. Generate and send final response
             response_text = generate_gemini_response(text)
+            
+            # Send final response (Telegram auto-replaces the last message)
             send_telegram_message(chat_id, response_text)
 
-    except Exception as e:
-        logger.error(f"Error processing update: {e}")
-
-# --- Flask Webhook Route ---
-
-@app.route('/')
-def hello():
-    return "Zathura Companion Bot is running."
-
-@app.route('/webhook', methods=['POST'])
-def webhook_handler():
-    if not BOT_TOKEN:
-        return jsonify({'status': 'BOT_TOKEN not configured'}), 503
-
-    try:
-        update = request.get_json()
-        
-        if not update or 'message' not in update:
-            return jsonify({'status': 'No message in update'}), 200
-
-        # CRITICAL FIX: Launch the heavy processing in a new thread immediately.
-        # This allows the main request handler to return '200 OK' instantly (webhook required).
-        threading.Thread(target=process_telegram_update, args=(update,)).start()
-        
-        return jsonify({'status': 'ok', 'message': 'Processing started'}), 200
+        return jsonify({'status': 'ok'}), 200
 
     except Exception as e:
-        logger.error(f"Error receiving webhook: {e}")
+        logger.error(f"Error handling webhook: {e}")
         return jsonify({'status': 'error'}), 500
 
-# --- Deployment Setup ---
+# --- Deployment Setup (Clean) ---
 
-def set_telegram_webhook():
-    """Sets the Telegram webhook URL."""
-    if not WEBHOOK_URL or not BOT_TOKEN:
-        logger.error("WEBHOOK_URL or BOT_TOKEN not set for webhook.")
-        return
+# NOTE: Removed set_telegram_webhook function and __main__ block
+# to prevent startup failures. The webhook must be set manually.
 
-    webhook_url = f"{TELEGRAM_API_URL}setWebhook"
-    payload = {"url": f"{WEBHOOK_URL}/webhook"}
-    
-    response = requests.post(webhook_url, json=payload)
-    logger.info(f"SetWebhook response: {response.status_code} - {response.text}")
-    
-    if response.status_code != 200:
-        logger.error(f"Failed to set webhook: {response.text}")
-
-if __name__ == '__main__':
-    # Set the webhook URL when the bot starts
-    set_telegram_webhook()
-    
-    # Render uses the PORT environment variable
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+# if __name__ == '__main__':
+#     # This block is removed. Gunicorn starts the app instance directly.
+#     pass
