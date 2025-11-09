@@ -54,7 +54,7 @@ def generate_gemini_response(prompt: str) -> str:
         if candidate and candidate.get('content') and candidate['content'].get('parts'):
             text = candidate['content']['parts'][0].get('text', "Could not generate a textual response.")
             
-            # Simplified source extraction (removing complicated markdown parsing)
+            # Simplified source extraction 
             return text
         else:
             return "Error: Received an empty or unexpected response from the Gemini API."
@@ -139,7 +139,6 @@ def set_telegram_webhook():
     response = requests.post(webhook_url, json=payload)
     logger.info(f"SetWebhook response: {response.status_code} - {response.text}")
     
-    # Render's logs should show this response to confirm Telegram received the URL.
     if response.status_code != 200:
         logger.error(f"Failed to set webhook: {response.text}")
 
