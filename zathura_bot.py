@@ -3,6 +3,7 @@ import os
 import requests
 import json
 import logging
+import base64
 from telegram import Update
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
@@ -143,7 +144,6 @@ def generate_image_handler(update: Update, context: CallbackContext) -> None:
                 # Decode base64 image data
                 base64_data = predictions[0]['bytesBase64Encoded']
                 # The telegram library needs a bytes object, not a string
-                import base64
                 image_bytes = base64.b64decode(base64_data)
                 
                 # Send the image
@@ -192,7 +192,9 @@ def main() -> None:
 
     # Use a dummy URL path; required by old PTB webhook structure
     WEBHOOK_PATH = 'webhook' 
-    PORT = int(os.environ.get('PORT', '8080')) # Render uses 8080 or port specified in PORT env var
+    
+    # FIX: Corrected syntax and simplified port logic for Render/Env compatibility
+    PORT = int(os.environ.get('PORT', 8080)) 
 
     # Create the Updater and pass it your bot's token.
     updater = Updater(BOT_TOKEN)
