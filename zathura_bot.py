@@ -3,7 +3,6 @@ import os
 import requests
 import json
 import logging
-import base64
 from telegram import Update
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
@@ -16,7 +15,6 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 # Gemini API URLs
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 GEMINI_TEXT_MODEL = "gemini-2.5-flash-preview-09-2025"
-GEMINI_IMAGE_MODEL = "imagen-3.0-generate-002:predict"
 
 # Logging setup
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -77,90 +75,17 @@ def generate_gemini_response(prompt: str) -> str:
         return "An unknown error occurred while generating the response."
 
 
-def generate_imagen_image(prompt: str) -> requests.Response:
-    """Sends a prompt to Imagen to generate an image and returns the raw response."""
-    if not GEMINI_API_KEY:
-        return None
-
-    url = f"{GEMINI_API_BASE}/{GEMINI_IMAGE_MODEL}?key={GEMINI_API_KEY}"
-    
-    payload = {
-        "instances": {
-            "prompt": f"Professional, detailed, sci-fi illustration: {prompt}"
-        },
-        "parameters": {
-            "sampleCount": 1,
-            "outputMimeType": "image/jpeg"
-        }
-    }
-    
-    headers = {'Content-Type': 'application/json'}
-    
-    try:
-        response = requests.post(url, headers=headers, data=json.dumps(payload))
-        response.raise_for_status()
-        return response
-    except requests.exceptions.HTTPError as e:
-        logger.error(f"HTTP Error during image generation: {e.response.status_code} - {e.response.text}")
-        return None
-    except Exception as e:
-        logger.error(f"General Error generating image: {e}")
-        return None
-
-
 # --- Telegram Handlers ---
 
 def start(update: Update, context: CallbackContext) -> None:
     """Sends the welcome message."""
     welcome_message = (
         "🛰️ *Welcome to Zathura Companion!*\n\n"
-        "I am your AI assistant for this chat. I can answer questions and generate images.\n\n"
+        "I am your text-based AI assistant for this chat. I can answer any question you have.\n\n"
         "**🤖 To Ask Me a Question:**\n"
-        "Just send your message as plain text (e.g., 'What is the largest nebula?').\n\n"
-        "**🖼️ To Generate an Image:**\n"
-        "Use the `/generate` command followed by a description.\n"
-        "Example: `/generate a retro-style spaceship flying over Mars`"
+        "Just send your message as plain text (e.g., 'What is the largest nebula?')."
     )
     update.message.reply_markdown_v2(welcome_message)
-
-
-def generate_image_handler(update: Update, context: CallbackContext) -> None:
-    """Handles the /generate command for image creation."""
-    prompt = " ".join(context.args)
-    if not prompt:
-        update.message.reply_text("Please provide a prompt after /generate. Example: /generate a robot reading a book")
-        return
-
-    update.message.reply_text(f"Generating image for prompt: '{prompt}'...")
-    
-    image_response = generate_imagen_image(prompt)
-    
-    if image_response and image_response.status_code == 200:
-        try:
-            result = image_response.json()
-            predictions = result.get('predictions', [])
-            
-            if predictions and predictions[0].get('bytesBase64Encoded'):
-                # Decode base64 image data
-                base64_data = predictions[0]['bytesBase64Encoded']
-                # The telegram library needs a bytes object, not a string
-                image_bytes = base64.b64decode(base64_data)
-                
-                # Send the image
-                update.message.reply_photo(
-                    photo=image_bytes, 
-                    caption=f"Generated Image: {prompt}"
-                )
-                return
-            else:
-                update.message.reply_text("Failed to generate image. The model returned no image data.")
-                return
-        except Exception as e:
-            logger.error(f"Error processing image response: {e}")
-            update.message.reply_text("Error processing the image data. Check server logs.")
-            return
-
-    update.message.reply_text("Failed to generate image. The API may have returned an error.")
 
 
 def text_handler(update: Update, context: CallbackContext) -> None:
@@ -204,7 +129,7 @@ def main() -> None:
 
     # Register handlers
     dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("generate", generate_image_handler))
+    # NOTE: /generate command handler removed to solve ModuleNotFoundError
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, text_handler))
     
     # --- Start the Webhook ---
