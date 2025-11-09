@@ -54,7 +54,6 @@ def generate_gemini_response(prompt: str) -> str:
         if candidate and candidate.get('content') and candidate['content'].get('parts'):
             text = candidate['content']['parts'][0].get('text', "Could not generate a textual response.")
             
-            # Simplified source extraction 
             return text
         else:
             return "Error: Received an empty or unexpected response from the Gemini API."
