@@ -5,6 +5,7 @@ import json
 import logging
 from flask import Flask, request, jsonify
 import sys
+import threading
 
 # --- Configuration and Constants ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -78,6 +79,41 @@ def send_telegram_message(chat_id, text, parse_mode="MarkdownV2"):
     }
     requests.post(send_url, json=payload)
 
+# --- Asynchronous Logic Processor ---
+
+def process_telegram_update(update):
+    """Processes the message payload in a separate thread."""
+    try:
+        message = update['message']
+        chat_id = message['chat']['id']
+        text = message.get('text', '')
+
+        if not text:
+            return
+
+        # Command Handling
+        if text.startswith('/start'):
+            welcome_message = (
+                "🛰️ *Welcome to Zathura Companion!* (Flask Stable)\n\n"
+                "I am your text-based AI assistant. I can answer any question you have.\n\n"
+                "*Python System Info:* " + sys.version.split()[0] + "\n\n"
+                "**🤖 To Ask Me a Question:**\n"
+                "Just send your message as plain text."
+            )
+            send_telegram_message(chat_id, welcome_message)
+        
+        # Text Handling
+        else:
+            # 1. Send "Thinking..." acknowledgment
+            send_telegram_message(chat_id, "Thinking...")
+            
+            # 2. Generate and send final response
+            response_text = generate_gemini_response(text)
+            send_telegram_message(chat_id, response_text)
+
+    except Exception as e:
+        logger.error(f"Error processing update: {e}")
+
 # --- Flask Webhook Route ---
 
 @app.route('/')
@@ -95,33 +131,14 @@ def webhook_handler():
         if not update or 'message' not in update:
             return jsonify({'status': 'No message in update'}), 200
 
-        message = update['message']
-        chat_id = message['chat']['id']
-        text = message.get('text', '')
-
-        if not text:
-            return jsonify({'status': 'No text in message'}), 200
-
-        # Command Handling
-        if text.startswith('/start'):
-            welcome_message = (
-                "🛰️ *Welcome to Zathura Companion!* (Flask Stable)\n\n"
-                "I am your text-based AI assistant. I can answer any question you have.\n\n"
-                "*Python System Info:* " + sys.version.split()[0] + "\n\n"
-                "**🤖 To Ask Me a Question:**\n"
-                "Just send your message as plain text."
-            )
-            send_telegram_message(chat_id, welcome_message)
+        # CRITICAL FIX: Launch the heavy processing in a new thread immediately.
+        # This allows the main request handler to return '200 OK' instantly (webhook required).
+        threading.Thread(target=process_telegram_update, args=(update,)).start()
         
-        # Text Handling
-        else:
-            response_text = generate_gemini_response(text)
-            send_telegram_message(chat_id, response_text)
-
-        return jsonify({'status': 'ok'}), 200
+        return jsonify({'status': 'ok', 'message': 'Processing started'}), 200
 
     except Exception as e:
-        logger.error(f"Error handling webhook: {e}")
+        logger.error(f"Error receiving webhook: {e}")
         return jsonify({'status': 'error'}), 500
 
 # --- Deployment Setup ---
