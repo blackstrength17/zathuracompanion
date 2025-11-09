@@ -1,0 +1,1 @@
+web: python zathura_bot.py
