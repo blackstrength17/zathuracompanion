@@ -129,7 +129,6 @@ def main() -> None:
 
     # Register handlers
     dp.add_handler(CommandHandler("start", start))
-    # NOTE: /generate command handler removed to solve ModuleNotFoundError
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, text_handler))
     
     # --- Start the Webhook ---
