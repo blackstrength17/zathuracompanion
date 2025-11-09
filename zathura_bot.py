@@ -168,6 +168,7 @@ def main() -> None:
         return
 
     # Create the Application and pass it your bot's token.
+    # We use the explicit webhook implementation to avoid the Updater conflict.
     application = Application.builder().token(BOT_TOKEN).build()
 
     # on different commands - answer in Telegram
@@ -184,12 +185,18 @@ def main() -> None:
     WEBHOOK_URL = os.environ.get('WEBHOOK_URL')
 
     if WEBHOOK_URL:
-        # Running via webhook for production environments (Render, etc.)
-        # FINAL FIX: Removed the redundant url_path parameter to prevent ptb v20.x from referencing the old Updater class.
+        # Running via explicit webhook setup to bypass ptb v20.x run_webhook conflicts.
+        
+        # 1. Set the webhook URL on Telegram's side
+        application.bot.set_webhook(f"{WEBHOOK_URL}/{BOT_TOKEN}")
+
+        # 2. Start the built-in HTTP server to listen for webhooks
         application.run_webhook(
             listen="0.0.0.0",
             port=PORT,
-            webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}",
+            url_path=BOT_TOKEN, # This is the specific path the handler listens on
+            # We explicitly set the secret token here for security best practices.
+            secret_token=BOT_TOKEN
         )
         logger.info(f"Bot started successfully via webhook on port {PORT}. URL: {WEBHOOK_URL}")
     else:
