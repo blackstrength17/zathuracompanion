@@ -5,6 +5,7 @@ import json
 import logging
 from telegram import Update
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+import sys
 
 # --- Configuration and Constants ---
 # Use environment variables for sensitive data
@@ -81,6 +82,7 @@ def start(update: Update, context: CallbackContext) -> None:
     """Sends the welcome message."""
     welcome_message = (
         "🛰️ *Welcome to Zathura Companion!*\n\n"
+        "Python Version: " + sys.version.split()[0] + "\n\n" # Debug Line
         "I am your text-based AI assistant for this chat. I can answer any question you have.\n\n"
         "**🤖 To Ask Me a Question:**\n"
         "Just send your message as plain text (e.g., 'What is the largest nebula?')."
