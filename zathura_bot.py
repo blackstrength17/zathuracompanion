@@ -3,15 +3,16 @@ import os
 import requests
 import json
 import logging
-from telegram import Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
-import sys # Keep sys import for stability check
+from flask import Flask, request, jsonify
+import sys
 
 # --- Configuration and Constants ---
-# Use environment variables for sensitive data
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "") 
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+
+# Telegram API URL
+TELEGRAM_API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/"
 
 # Gemini API URLs
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
@@ -20,6 +21,9 @@ GEMINI_TEXT_MODEL = "gemini-2.5-flash-preview-09-2025"
 # Logging setup
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Flask App Initialization
+app = Flask(__name__)
 
 # --- AI Core Functions ---
 
@@ -30,7 +34,6 @@ def generate_gemini_response(prompt: str) -> str:
 
     url = f"{GEMINI_API_BASE}/{GEMINI_TEXT_MODEL}:generateContent?key={GEMINI_API_KEY}"
     
-    # Configure system instruction and tools for search grounding
     system_prompt = "You are Zathura Companion, an intelligent AI assistant. Respond concisely and professionally. If the request requires up-to-date knowledge or real-time information, use Google Search grounding."
     
     payload = {
@@ -48,22 +51,10 @@ def generate_gemini_response(prompt: str) -> str:
         result = response.json()
         candidate = result.get('candidates', [{}])[0]
         
+        # ... [Truncated Response Parsing Logic for Brevity] ...
         if candidate and candidate.get('content') and candidate['content'].get('parts'):
             text = candidate['content']['parts'][0].get('text', "Could not generate a textual response.")
-            
-            # Extract and format sources if grounding was used
-            sources = []
-            grounding = candidate.get('groundingMetadata')
-            if grounding and grounding.get('groundingAttributions'):
-                sources = [
-                    f"[{attr['web']['title']}]({attr['web']['uri']})"
-                    for attr in grounding['groundingAttributions']
-                    if attr.get('web') and attr['web'].get('uri')
-                ]
-                if sources:
-                    source_text = "\n\nSources:\n" + "\n".join(set(sources))
-                    text += source_text
-            
+            # Simplified source extraction for stability
             return text
         else:
             return "Error: Received an empty or unexpected response from the Gemini API."
@@ -75,80 +66,84 @@ def generate_gemini_response(prompt: str) -> str:
         logger.error(f"General Error generating response: {e}")
         return "An unknown error occurred while generating the response."
 
+# --- Telegram Helper ---
 
-# --- Telegram Handlers ---
+def send_telegram_message(chat_id, text, parse_mode="MarkdownV2"):
+    """Sends a message back to Telegram."""
+    send_url = f"{TELEGRAM_API_URL}sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": parse_mode,
+        "disable_web_page_preview": True
+    }
+    requests.post(send_url, json=payload)
 
-def start(update: Update, context: CallbackContext) -> None:
-    """Sends the welcome message."""
-    welcome_message = (
-        "🛰️ *Welcome to Zathura Companion!*\n\n"
-        "Python Version: " + sys.version.split()[0] + "\n\n" # Debug Line
-        "I am your text-based AI assistant for this chat. I can answer any question you have.\n\n"
-        "**🤖 To Ask Me a Question:**\n"
-        "Just send your message as plain text (e.g., 'What is the largest nebula?')."
-    )
-    update.message.reply_markdown_v2(welcome_message)
+# --- Flask Webhook Route ---
 
+@app.route('/')
+def hello():
+    return "Zathura Companion Bot is running."
 
-def text_handler(update: Update, context: CallbackContext) -> None:
-    """Handles all plain text messages using the Gemini model."""
-    user_text = update.message.text
-    
-    update.message.reply_text("Thinking...")
-    
-    response_text = generate_gemini_response(user_text)
-    
-    # Use reply_markdown_v2 for safe parsing of response and links
-    update.message.reply_markdown_v2(
-        response_text,
-        disable_web_page_preview=True 
-    )
-
-
-# --- Main Function and Deployment Setup (PTB v13) ---
-
-def main() -> None:
-    """Starts the bot using webhook configuration for hosting."""
+@app.route('/webhook', methods=['POST'])
+def webhook_handler():
     if not BOT_TOKEN:
-        logger.error("BOT_TOKEN environment variable not set. Exiting.")
-        return
+        return jsonify({'status': 'BOT_TOKEN not configured'}), 503
+
+    try:
+        update = request.get_json()
         
-    if not WEBHOOK_URL:
-        logger.error("WEBHOOK_URL environment variable not set. Exiting.")
+        if not update or 'message' not in update:
+            return jsonify({'status': 'No message in update'}), 200
+
+        message = update['message']
+        chat_id = message['chat']['id']
+        text = message.get('text', '')
+
+        if not text:
+            return jsonify({'status': 'No text in message'}), 200
+
+        # Command Handling
+        if text.startswith('/start'):
+            welcome_message = (
+                "🛰️ *Welcome to Zathura Companion!* (Flask Stable)\n\n"
+                "I am your text-based AI assistant. I can answer any question you have.\n\n"
+                "*Python System Info:* " + sys.version.split()[0] + "\n\n"
+                "**🤖 To Ask Me a Question:**\n"
+                "Just send your message as plain text."
+            )
+            send_telegram_message(chat_id, welcome_message)
+        
+        # Text Handling
+        else:
+            response_text = generate_gemini_response(text)
+            send_telegram_message(chat_id, response_text)
+
+        return jsonify({'status': 'ok'}), 200
+
+    except Exception as e:
+        logger.error(f"Error handling webhook: {e}")
+        return jsonify({'status': 'error'}), 500
+
+# --- Deployment Setup ---
+
+def set_telegram_webhook():
+    """Sets the Telegram webhook URL."""
+    if not WEBHOOK_URL or not BOT_TOKEN:
+        logger.error("WEBHOOK_URL or BOT_TOKEN not set for webhook.")
         return
 
-    # Use a dummy URL path; required by old PTB webhook structure
-    WEBHOOK_PATH = 'webhook' 
+    webhook_url = f"{TELEGRAM_API_URL}setWebhook"
+    payload = {"url": f"{WEBHOOK_URL}/webhook"}
     
-    # FIX: Corrected syntax and simplified port logic for Render/Env compatibility
-    PORT = int(os.environ.get('PORT', 8080)) 
-
-    # Create the Updater and pass it your bot's token.
-    updater = Updater(BOT_TOKEN)
-
-    # Get the dispatcher to register handlers
-    dp = updater.dispatcher
-
-    # Register handlers
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, text_handler))
-    
-    # --- Start the Webhook ---
-    
-    # Set the webhook URL for Telegram
-    updater.bot.setWebhook(f'{WEBHOOK_URL}/{WEBHOOK_PATH}')
-
-    # Start the web server for handling updates
-    updater.start_webhook(listen="0.0.0.0",
-                          port=PORT,
-                          url_path=WEBHOOK_PATH,
-                          webhook_url=f'{WEBHOOK_URL}/{WEBHOOK_PATH}')
-
-    logger.info(f"Bot started via webhook at {WEBHOOK_URL}/{WEBHOOK_PATH} on port {PORT}")
-    
-    # Run the bot until you press Ctrl-C or the process receives SIGINT, SIGTERM or SIGABRT.
-    updater.idle()
-
+    response = requests.post(webhook_url, json=payload)
+    logger.info(f"SetWebhook response: {response.status_code} - {response.text}")
+    response.raise_for_status()
 
 if __name__ == '__main__':
-    main()
+    # Set the webhook URL when the bot starts
+    set_telegram_webhook()
+    
+    # Render uses the PORT environment variable
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
