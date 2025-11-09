@@ -5,6 +5,7 @@ import json
 import logging
 from flask import Flask, request, jsonify
 import sys
+import threading
 
 # --- Configuration and Constants ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -78,6 +79,21 @@ def send_telegram_message(chat_id, text, parse_mode="MarkdownV2"):
     }
     requests.post(send_url, json=payload)
 
+# --- Asynchronous Logic Processor ---
+
+def process_ai_request(chat_id, text):
+    """Processes the message payload in a separate thread."""
+    try:
+        # 1. Send "Thinking..." acknowledgment
+        send_telegram_message(chat_id, "Thinking...")
+        
+        # 2. Generate and send final response
+        response_text = generate_gemini_response(text)
+        send_telegram_message(chat_id, response_text)
+
+    except Exception as e:
+        logger.error(f"Error processing AI request: {e}")
+
 # --- Flask Webhook Route ---
 
 @app.route('/')
@@ -103,7 +119,7 @@ def webhook_handler():
         if not text:
             return jsonify({'status': 'No text in message'}), 200
 
-        # Command Handling
+        # --- CRITICAL START FIX ---
         if text.startswith('/start'):
             welcome_message = (
                 "🛰️ *Welcome to Zathura Companion!* (Flask Stable)\n\n"
@@ -112,29 +128,43 @@ def webhook_handler():
                 "**🤖 To Ask Me a Question:**\n"
                 "Just send your message as plain text."
             )
+            # Send welcome message synchronously and instantly, before returning 200 OK
             send_telegram_message(chat_id, welcome_message)
+            return jsonify({'status': 'ok', 'message': '/start processed'}), 200
+        # --- END CRITICAL START FIX ---
         
-        # Text Handling
+        # Text Handling (AI processing handled asynchronously)
         else:
-            # Send thinking message instantly before processing
-            send_telegram_message(chat_id, "Thinking...")
-            
-            response_text = generate_gemini_response(text)
-            
-            # Send final response (Telegram auto-replaces the last message)
-            send_telegram_message(chat_id, response_text)
-
-        return jsonify({'status': 'ok'}), 200
+            # Launch the heavy AI processing in a new thread immediately.
+            threading.Thread(target=process_ai_request, args=(chat_id, text)).start()
+        
+        return jsonify({'status': 'ok', 'message': 'Processing started'}), 200
 
     except Exception as e:
-        logger.error(f"Error handling webhook: {e}")
+        logger.error(f"Error receiving webhook: {e}")
         return jsonify({'status': 'error'}), 500
 
-# --- Deployment Setup (Clean) ---
+# --- Deployment Setup ---
 
-# NOTE: Removed set_telegram_webhook function and __main__ block
-# to prevent startup failures. The webhook must be set manually.
+def set_telegram_webhook():
+    """Sets the Telegram webhook URL."""
+    if not WEBHOOK_URL or not BOT_TOKEN:
+        logger.error("WEBHOOK_URL or BOT_TOKEN not set for webhook.")
+        return
 
-# if __name__ == '__main__':
-#     # This block is removed. Gunicorn starts the app instance directly.
-#     pass
+    webhook_url = f"{TELEGRAM_API_URL}setWebhook"
+    payload = {"url": f"{WEBHOOK_URL}/webhook"}
+    
+    response = requests.post(webhook_url, json=payload)
+    logger.info(f"SetWebhook response: {response.status_code} - {response.text}")
+    
+    if response.status_code != 200:
+        logger.error(f"Failed to set webhook: {response.text}")
+
+if __name__ == '__main__':
+    # Set the webhook URL when the bot starts
+    set_telegram_webhook()
+    
+    # Render uses the PORT environment variable
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
